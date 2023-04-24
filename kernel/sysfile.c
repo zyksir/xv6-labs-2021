@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "sysinfo.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -113,6 +114,22 @@ sys_fstat(void)
   if(argfd(0, 0, &f) < 0 || argaddr(1, &st) < 0)
     return -1;
   return filestat(f, st);
+}
+
+uint64
+sys_sysinfo(void)
+{
+  struct sysinfo info;
+  uint64 sysinfo_addr; // user pointer to sysinfo
+  if (argaddr(0, &sysinfo_addr) < 0) {
+    return -1;
+  }
+  info.freemem = get_freemem();
+  info.nproc = get_nproc();
+  struct proc *p = myproc();
+  if(copyout(p->pagetable, sysinfo_addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+	return 0;
 }
 
 // Create the path new as a link to the same inode as old.
