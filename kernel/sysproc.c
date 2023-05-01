@@ -80,7 +80,43 @@ sys_sleep(void)
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 va; // the starting virtual address of the first user page to check.
+  int n;    // the number of pages to check
+  uint64 result; // virtual address where we store the result
+  if (argaddr(0, &va) < 0) 
+    return -1;
+  if(va >= MAXVA) // invalid virtual address
+    return -1;
+  if (argint(1, &n) < 0)
+    return -1;
+  if (n > 32) // max number of scanned pages
+    return -1;
+  if (argaddr(2, &result) < 0)
+    return -1;
+  
+  pagetable_t pagetable = myproc()->pagetable;
+  unsigned int abits = 0;
+  // vmprint(pagetable);
+  for(int i = 0; i < n; ++i) {
+    pagetable_t tmp_pagetable = pagetable;
+    for(int level = 2; level > 0; level--) {
+      pte_t *pte = &tmp_pagetable[PX(level, va)];
+      if(*pte & PTE_V) {
+        tmp_pagetable = (pagetable_t)PTE2PA(*pte);
+      } else {
+        return -1; // invalid memory
+      }
+    }
+    pte_t *pte = &tmp_pagetable[PX(0, va)];
+    if ((*pte) & PTE_A) {
+      abits |= (1<<i);
+      (*pte) &= (~PTE_A);
+    }
+    va += PGSIZE;
+  }
+  if(copyout(pagetable, result, (char*)&abits, sizeof(abits)) < 0)
+    return -1;
+  // printf("[debug] pgaccess:\t%p\t%d\t%d\n", va, n, result);
   return 0;
 }
 #endif
