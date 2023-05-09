@@ -127,6 +127,19 @@ panic(char *s)
 }
 
 void
+backtrace(void)
+{
+  uint64 fp = r_fp();
+  uint64 top_stack = PGROUNDDOWN(fp), bottom_stack = PGROUNDUP(fp);
+  printf("%p\n", *(uint64*)(fp - 8));
+  fp = *(uint64*)(fp - 16);
+  while(fp > top_stack && fp < bottom_stack) {
+    printf("%p\n", *(uint64*)(fp - 8));
+    fp = *(uint64*)(fp - 16);
+  }
+}
+
+void
 printfinit(void)
 {
   initlock(&pr.lock, "pr");
