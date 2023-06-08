@@ -28,7 +28,10 @@ struct kmem kmems[NCPU];
 void
 kinit()
 {
+  // char lockname[16];
   for(int i = 0; i < NCPU; ++i) {
+    // snprintf(lockname, sizeof(lockname), "kmem_%d", i);
+    // initlock(&kmems[i].lock, lockname);
     initlock(&kmems[i].lock, "kmem");
     kmems[i].freenum = 0;
   }
