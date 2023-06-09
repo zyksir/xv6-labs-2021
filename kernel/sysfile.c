@@ -132,7 +132,7 @@ sys_link(void)
   }
 
   ilock(ip);
-  if(ip->type == T_DIR){
+  if(ip->type == T_DIR || ip->type == T_SYMLINK){
     iunlockput(ip);
     end_op();
     return -1;
@@ -214,6 +214,10 @@ sys_unlink(void)
     iunlockput(ip);
     goto bad;
   }
+  if(ip->type == T_SYMLINK) {
+    iunlockput(ip);
+    goto bad;
+  }
 
   memset(&de, 0, sizeof(de));
   if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
@@ -244,8 +248,10 @@ create(char *path, short type, short major, short minor)
   struct inode *ip, *dp;
   char name[DIRSIZ];
 
-  if((dp = nameiparent(path, name)) == 0)
+  if((dp = nameiparent(path, name)) == 0) {
+    // printf("create fail to name parent\n");
     return 0;
+  }
 
   ilock(dp);
 
@@ -255,6 +261,7 @@ create(char *path, short type, short major, short minor)
     if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
       return ip;
     iunlockput(ip);
+    // printf("create find exsiting name\n");
     return 0;
   }
 
@@ -322,6 +329,29 @@ sys_open(void)
     return -1;
   }
 
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+    char target[MAXPATH];
+    for(int i = 0; i < MAX_SYMLINK_DEPTH; ++i) {
+      if (readi(ip, 0, (uint64)target, 0, MAXPATH) != MAXPATH) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+      if ((ip = namei(target)) == 0) {
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+      if (ip->type != T_SYMLINK) break;
+    }
+    if(ip->type == T_SYMLINK) {
+      iunlockput(ip);
+      end_op();
+      return -1; // OVERFLOW
+    }
+  }
+  
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -482,5 +512,35 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH];
+  char path[MAXPATH];
+  struct inode *ip;
+  begin_op();
+  if(argstr(1, path, MAXPATH) < 0 || 
+    argstr(0, target, MAXPATH) < 0){
+    // printf("fail to parse input\n");
+    end_op();
+    return -1;
+  }
+  if ((ip = create(path, T_SYMLINK, 0, 0)) == 0) {
+    // printf("fail to create ip\n");
+    end_op();
+    return -1;
+  }
+  if (writei(ip, 0, (uint64)target, 0, MAXPATH) < MAXPATH) {
+    // printf("fail to write into file\n");
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+    
+  iunlockput(ip);
+  end_op();
   return 0;
 }
