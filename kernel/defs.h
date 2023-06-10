@@ -4,6 +4,7 @@ struct file;
 struct inode;
 struct pipe;
 struct proc;
+struct vm_area;
 struct spinlock;
 struct sleeplock;
 struct stat;

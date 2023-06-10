@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -29,6 +33,56 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+int mmap_handler(int scause, uint64 va) {
+  int i = 0;
+  struct proc* p = myproc();
+  struct vm_area* vma;
+  
+  for(i = 0; i < NVMA; ++i) {
+    vma = &(p->vma[i]);
+    if (vma->used && vma->addr <= va && va < vma->addr+vma->len) {
+      break;
+    }
+  }
+  if (i == NVMA) {
+    // panic("mmap_handler: vma not found");
+    return -1;
+  }
+
+  struct file* vfile = vma->vfile;
+  if ((scause == 13 && vfile->readable == 0) || (scause == 15 && vfile->writable == 0)) {
+    panic("mmap_handler: permission error");
+    return -1;
+  } 
+
+  void* pa;
+  if ((pa = kalloc()) == 0) return -1;
+  memset(pa, 0, PGSIZE);
+  begin_op();
+  ilock(vfile->ip);
+  int offset = vma->offset + PGROUNDDOWN(va - vma->addr);
+  if (readi(vfile->ip, 0, (uint64)pa, offset, PGSIZE) == 0) {
+    iunlock(vfile->ip);
+    kfree(pa);
+    end_op();
+    panic("mmap_handler: fail to readi");
+    return -1;
+  }
+  iunlock(vfile->ip);
+  end_op();
+
+  int pte_flags = PTE_U;
+  if(vma->prot & PROT_READ) pte_flags |= PTE_R;
+  if(vma->prot & PROT_WRITE) pte_flags |= PTE_W;
+  if(vma->prot & PROT_EXEC) pte_flags |= PTE_X;
+  if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)pa, pte_flags) != 0) {
+    kfree(pa);
+    panic("mmap_handler: mappages");
+    return -1;
+  }
+  return 0;
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -49,8 +103,9 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
+  uint64 cause = r_scause();
   
-  if(r_scause() == 8){
+  if(cause == 8){
     // system call
 
     if(p->killed)
@@ -67,7 +122,12 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(cause == 13 || cause == 15) {
+    uint64 fault_va = r_stval();
+    if(mmap_handler(cause, fault_va) != 0) 
+      goto trap_failed;
   } else {
+    trap_failed:
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

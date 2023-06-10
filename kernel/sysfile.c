@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -482,5 +483,101 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+/**
+ * @brief 
+ * @param void *addr, int length, int prot, int flags,
+           int fd, int offset
+ * find an unused region in the process's address space in which to map the file, 
+ * and add a VMA to the process's table of mapped regions. 
+ * The VMA should contain a pointer to a struct file for the file being mapped; 
+ * mmap should increase the file's reference count 
+ * so that the structure doesn't disappear when the file is closed (hint: see filedup). 
+ * 
+ * @return uint64 
+ */
+uint64 
+sys_mmap(void)
+{
+  uint64 addr;
+  int length, prot, flags, vfd, offset;
+  struct file* vfile;
+  static const uint64 err = 0xffffffffffffffff;
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 ||
+    argint(3, &flags) < 0 || argfd(4, &vfd, &vfile) < 0 || argint(5, &offset) < 0)
+    return err;
+  
+  if (flags == MAP_SHARED && vfile->writable == 0 && (prot & PROT_WRITE) != 0) {
+    return err;
+  }
+  length = PGROUNDUP(length);
+  if(vfile->readable == 0 && (prot & (PROT_READ)))
+    return err;
+  struct proc* p = myproc();
+  struct vm_area * vma = 0;
+  uint64 vaend = TRAPFRAME; // non-inclusive
+  for(int i = 0; i < NVMA; ++i) {
+    if (p->vma[i].used == 0) {
+      if (vma == 0) {
+        vma = &p->vma[i];
+        vma->used = 1;
+      }
+    } else if (p->vma[i].addr < vaend) {
+      vaend = PGROUNDDOWN(p->vma[i].addr);
+    }
+  }
+  if (vma == 0) return err;
+  vma->addr = vaend - length;
+  vma->len = length;
+  vma->prot = prot;
+  vma->flags = flags;
+  vma->vfile = vfile;
+  vma->vfd = vfd;
+  vma->offset = offset;
+  filedup(vfile);
+  return vma->addr;
+}
+
+uint64 
+sys_munmap(void)
+{
+  uint64 addr;
+  int length;
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0) {
+    return -1;
+  }
+  length = PGROUNDUP(length);
+  addr = PGROUNDDOWN(addr);
+  int i;
+  struct proc* p = myproc();
+  for(i = 0; i < NVMA; ++i) {
+    if (p->vma[i].used && p->vma[i].len >= length) {
+      if (p->vma[i].addr == addr) {
+        p->vma[i].addr += length;
+        p->vma[i].len -= length;
+        break;
+      }
+      if (p->vma[i].addr + p->vma[i].len == addr + length) {
+        p->vma[i].len -= length;
+        break;
+      }
+    }
+  }
+  if (i == NVMA) return -1;
+  // supposed to write a new function vmaunmap, 
+  // t behaves like uvmunmap, while it check dirty bit and write back for each page
+  if (p->vma[i].flags == MAP_SHARED && ((p->vma[i].prot & PROT_WRITE) != 0)) {
+    // TODO: check the dirty bit and decide which page to write back 
+    filewrite(p->vma[i].vfile, addr, length);
+  }
+  uvmunmap(p->pagetable, addr, length/PGSIZE, 1);
+
+  if(p->vma[i].len == 0) {
+    fileclose(p->vma[i].vfile);
+    p->vma[i].used = 0;
+  }
+
   return 0;
 }

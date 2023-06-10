@@ -227,8 +227,10 @@ mmap_test(void)
   close(fd2);
   unlink("mmap2");
 
+  // printf("mmap2 %s, %p\n", p1, p1);
   if(memcmp(p1, "12345", 5) != 0)
     err("mmap1 mismatch");
+  // printf("mmap2 %s, %p\n", p2, p2);
   if(memcmp(p2, "67890", 5) != 0)
     err("mmap2 mismatch");
 
